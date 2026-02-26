@@ -4,3 +4,6 @@ publish/
 *.user
 *.suo
 .vs/
+node_modules/
+package.json
+package-lock.json

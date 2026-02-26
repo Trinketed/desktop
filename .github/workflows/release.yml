@@ -21,16 +21,8 @@ jobs:
       - name: Publish
         run: dotnet publish -c Release -r win-x64 --self-contained -o ./publish
 
-      - name: Sign executable
-        uses: sslcom/esigner-codesign@develop
-        with:
-          command: sign
-          username: ${{ secrets.ES_USERNAME }}
-          password: ${{ secrets.ES_PASSWORD }}
-          credential_id: ${{ secrets.CREDENTIAL_ID }}
-          totp_secret: ${{ secrets.ES_TOTP_SECRET }}
-          file_path: ./publish/TrinketedDesktop.exe
-          override: true
+      - name: Rename executable
+        run: Rename-Item "./publish/Trinketed Desktop.exe" "TrinketedDesktop.exe"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

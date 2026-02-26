@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -15,32 +17,32 @@ namespace TrinketedDesktop;
 // ── Design System (matching Trinketed webapp) ──────────────────────
 static class Theme
 {
-    // Surface palette — layered dark
-    public static readonly Color BgDeep = Color.FromArgb(10, 10, 10);       // #0A0A0A
-    public static readonly Color BgBase = Color.FromArgb(20, 20, 22);       // #141416
-    public static readonly Color BgRaised = Color.FromArgb(28, 28, 30);     // #1C1C1E
-    public static readonly Color BgElevated = Color.FromArgb(34, 34, 38);   // #222226
-    public static readonly Color BgHover = Color.FromArgb(40, 40, 46);      // #28282E
+    // Surface palette
+    public static readonly Color BgDeep = Color.FromArgb(11, 12, 15);        // #0B0C0F
+    public static readonly Color BgBase = Color.FromArgb(21, 23, 27);        // #15171B
+    public static readonly Color BgRaised = Color.FromArgb(30, 32, 40);      // #1E2028
+    public static readonly Color BgElevated = Color.FromArgb(42, 46, 54);    // #2A2E36
+    public static readonly Color BgHover = Color.FromArgb(50, 54, 64);       // #323640
 
     // Borders
-    public static readonly Color BorderSubtle = Color.FromArgb(42, 42, 47);  // #2A2A2F
-    public static readonly Color BorderDefault = Color.FromArgb(58, 58, 66); // #3A3A42
+    public static readonly Color BorderSubtle = Color.FromArgb(37, 40, 48);   // #252830
+    public static readonly Color BorderDefault = Color.FromArgb(54, 58, 69);  // #363A45
 
-    // Forge Gold
-    public static readonly Color Gold = Color.FromArgb(232, 185, 35);        // #E8B923
-    public static readonly Color GoldDim = Color.FromArgb(184, 148, 28);     // #B8941C
-    public static readonly Color GoldGlow = Color.FromArgb(245, 208, 78);    // #F5D04E
+    // Gold palette
+    public static readonly Color Gold = Color.FromArgb(212, 170, 68);         // #D4AA44
+    public static readonly Color GoldDim = Color.FromArgb(156, 123, 43);      // #9C7B2B
+    public static readonly Color GoldGlow = Color.FromArgb(246, 200, 107);    // #F6C86B
 
     // Semantic
-    public static readonly Color Positive = Color.FromArgb(74, 222, 128);    // #4ADE80
-    public static readonly Color Negative = Color.FromArgb(242, 92, 84);     // #F25C54
-    public static readonly Color AccentBlue = Color.FromArgb(69, 123, 157);  // #457B9D
+    public static readonly Color Positive = Color.FromArgb(34, 197, 94);      // #22C55E
+    public static readonly Color Negative = Color.FromArgb(239, 68, 68);      // #EF4444
+    public static readonly Color AccentBlue = Color.FromArgb(59, 130, 246);   // #3B82F6
 
     // Text
     public static readonly Color TextPrimary = Color.FromArgb(244, 244, 245);  // #F4F4F5
     public static readonly Color TextSecondary = Color.FromArgb(156, 163, 175); // #9CA3AF
-    public static readonly Color TextMuted = Color.FromArgb(92, 94, 102);      // #5C5E66
-    public static readonly Color TextDim = Color.FromArgb(62, 63, 69);         // #3E3F45
+    public static readonly Color TextMuted = Color.FromArgb(107, 114, 128);    // #6B7280
+    public static readonly Color TextDim = Color.FromArgb(55, 58, 69);         // #373A45
 }
 
 // ── Entry Point ────────────────────────────────────────────────────
@@ -62,6 +64,32 @@ class ReleaseInfo
     public string DownloadUrl { get; set; } = "";
     public string FileName { get; set; } = "";
     public string Body { get; set; } = "";
+}
+
+class AddonInfo
+{
+    public string Name { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Color { get; set; } = "#D4AA44";
+
+    public System.Drawing.Color ParsedColor
+    {
+        get
+        {
+            try
+            {
+                if (Color.StartsWith("#") && Color.Length == 7)
+                {
+                    int r = Convert.ToInt32(Color.Substring(1, 2), 16);
+                    int g = Convert.ToInt32(Color.Substring(3, 2), 16);
+                    int b = Convert.ToInt32(Color.Substring(5, 2), 16);
+                    return System.Drawing.Color.FromArgb(r, g, b);
+                }
+            }
+            catch { }
+            return Theme.Gold;
+        }
+    }
 }
 
 // ── Tray Application Context ──────────────────────────────────────
@@ -104,7 +132,7 @@ class TrayContext : ApplicationContext
         _timer.Tick += async (_, _) =>
         {
             await CheckForUpdate(true);
-            await CheckForAppUpdate();
+            await CheckAppUpdate();
         };
         _timer.Start();
 
@@ -112,7 +140,7 @@ class TrayContext : ApplicationContext
         ShowInstallWindow();
 
         _ = CheckForUpdate(true);
-        _ = CheckForAppUpdate();
+        _ = CheckAppUpdate();
     }
 
     ContextMenuStrip BuildMenu()
@@ -228,7 +256,7 @@ class TrayContext : ApplicationContext
         return null;
     }
 
-    async Task CheckForAppUpdate()
+    public async Task CheckAppUpdate()
     {
         try
         {
@@ -294,10 +322,11 @@ class TrayContext : ApplicationContext
         _form.Show();
     }
 
-    public async Task<string> InstallAddon(Action<string> log, Action<int> progress)
+    public async Task<string> InstallAddon(HashSet<string> selectedAddons, Action<string> log, Action<int> progress)
     {
         if (_addOnsPath == null) return "AddOns folder not found.";
         if (_latestRelease == null) return "No release info available.";
+        if (selectedAddons.Count == 0) return "No addons selected.";
 
         var tempZip = Path.Combine(Path.GetTempPath(), _latestRelease.FileName);
         var tempDir = Path.Combine(Path.GetTempPath(), "TrinketedExtract");
@@ -321,6 +350,7 @@ class TrayContext : ApplicationContext
             {
                 var dirName = Path.GetFileName(dir);
                 if (Directory.GetFiles(dir, "*.toc").Length == 0) continue;
+                if (!selectedAddons.Contains(dirName)) { log($"Skipped {dirName}"); continue; }
                 var dest = Path.Combine(_addOnsPath, dirName);
                 if (Directory.Exists(dest)) Directory.Delete(dest, true);
                 CopyDirectory(dir, dest);
@@ -352,6 +382,29 @@ class TrayContext : ApplicationContext
     public string? InstalledVersion => GetInstalledVersion();
     public async Task RefreshRelease() => await CheckForUpdate(false);
 
+    public async Task<List<AddonInfo>> FetchAddonManifest()
+    {
+        try
+        {
+            var url = $"https://raw.githubusercontent.com/{Repo}/main/addons.json";
+            var json = await _http.GetStringAsync(url);
+            var addons = JsonSerializer.Deserialize<List<AddonInfo>>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+            if (addons != null && addons.Count > 0) return addons;
+        }
+        catch { }
+
+        // Fallback — return defaults so the app still works offline
+        return new List<AddonInfo>
+        {
+            new() { Name = "Trinketed", Description = "Core framework & shared library", Color = "#D4AA44" },
+            new() { Name = "TrinketedCD", Description = "Arena cooldown tracker", Color = "#3B82F6" },
+            new() { Name = "TrinketedHistory", Description = "Match history & VOD timestamps", Color = "#22C55E" },
+        };
+    }
+
     static bool IsInStartup()
     {
         using var key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", false);
@@ -368,30 +421,38 @@ class TrayContext : ApplicationContext
         key?.DeleteValue(AppName, false);
     }
 
-    static Icon CreateTrayIcon()
+    internal static PointF[] SvgHexPoints(float[][] coords, float scale, float ox = 0, float oy = 0)
+    {
+        var pts = new PointF[coords.Length];
+        for (int i = 0; i < coords.Length; i++)
+            pts[i] = new PointF(coords[i][0] * scale + ox, coords[i][1] * scale + oy);
+        return pts;
+    }
+
+    // SVG paths from webapp nav-logo (viewBox 0 0 24 24)
+    internal static readonly float[][] OuterHex = { new[]{12f,2f}, new[]{4f,7f}, new[]{4f,17f}, new[]{12f,22f}, new[]{20f,17f}, new[]{20f,7f} };
+    internal static readonly float[][] InnerHex = { new[]{9f,10f}, new[]{12f,8f}, new[]{15f,10f}, new[]{15f,14f}, new[]{12f,16f}, new[]{9f,14f} };
+
+    internal static Icon CreateTrayIcon()
     {
         var bmp = new Bitmap(32, 32);
         using var g = Graphics.FromImage(bmp);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.Clear(Color.Transparent);
 
-        // Gold hexagon (matching webapp logo shape)
-        var cx = 16f; var cy = 16f; var r = 14f;
-        var pts = new PointF[6];
-        for (int i = 0; i < 6; i++)
-        {
-            var angle = Math.PI / 6 + i * Math.PI / 3;
-            pts[i] = new PointF(cx + r * (float)Math.Cos(angle), cy + r * (float)Math.Sin(angle));
-        }
-        using var hexBrush = new LinearGradientBrush(
-            new PointF(0, 0), new PointF(32, 32),
-            Theme.Gold, Theme.GoldDim);
-        g.FillPolygon(hexBrush, pts);
+        var s = 32f / 24f;
+        var outer = SvgHexPoints(OuterHex, s);
+        var inner = SvgHexPoints(InnerHex, s);
 
-        using var font = new Font("Segoe UI", 14, FontStyle.Bold);
-        using var tb = new SolidBrush(Theme.BgDeep);
-        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-        g.DrawString("T", font, tb, new RectangleF(0, 1, 32, 32), sf);
+        // Outer hexagon — stroke only
+        using var outerPen = new Pen(Theme.Gold, 1.5f * s);
+        g.DrawPolygon(outerPen, outer);
+
+        // Inner hexagon — filled at 30% opacity + stroke
+        using var innerFill = new SolidBrush(Color.FromArgb(77, Theme.Gold));
+        g.FillPolygon(innerFill, inner);
+        using var innerPen = new Pen(Theme.Gold, 1f * s);
+        g.DrawPolygon(innerPen, inner);
 
         return Icon.FromHandle(bmp.GetHicon());
     }
@@ -501,12 +562,12 @@ class GoldButton : Control
 
         if (IsUpToDate)
         {
-            // Green-tinted "up to date" state — feels like a positive confirmation
-            using var fill = new SolidBrush(Color.FromArgb(12, Theme.Positive.R, Theme.Positive.G, Theme.Positive.B));
+            // Gold-tinted "up to date" state using brand colors
+            using var fill = new SolidBrush(Color.FromArgb(12, Theme.Gold.R, Theme.Gold.G, Theme.Gold.B));
             g.FillPath(fill, path);
-            using var border = new Pen(Color.FromArgb(50, Theme.Positive.R, Theme.Positive.G, Theme.Positive.B));
+            using var border = new Pen(Color.FromArgb(50, Theme.Gold.R, Theme.Gold.G, Theme.Gold.B));
             g.DrawPath(border, path);
-            DrawText(g, Theme.Positive);
+            DrawText(g, Theme.Gold);
             Cursor = Cursors.Default;
             return;
         }
@@ -619,18 +680,21 @@ class GhostButton : Control
     }
 }
 
-// Sub-addon card with left edge color bar
+// Sub-addon card with left edge color bar and toggle selection
 class AddonCard : Control
 {
     public string AddonTitle { get; set; } = "";
+    public string FolderName { get; set; } = "";
     public string Description { get; set; } = "";
     public Color EdgeColor { get; set; } = Theme.Gold;
+    public bool Selected { get; set; } = true;
     bool _hovering;
 
     public AddonCard()
     {
         DoubleBuffered = true;
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.Selectable, true);
+        Cursor = Cursors.Hand;
         Height = 48;
     }
 
@@ -639,32 +703,60 @@ class AddonCard : Control
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        // Background
-        var bg = _hovering ? Theme.BgHover : Theme.BgElevated;
+        // Background — dimmed when deselected
+        var bg = !Selected ? Theme.BgBase
+               : _hovering ? Theme.BgHover : Theme.BgElevated;
         using var fill = new SolidBrush(bg);
         g.FillRectangle(fill, 0, 0, Width, Height);
 
-        // Left edge bar (3px, matching GameCard style)
-        using var edgeBrush = new SolidBrush(EdgeColor);
+        // Left edge bar — dimmed when deselected
+        var edgeColor = Selected ? EdgeColor : Color.FromArgb(60, EdgeColor);
+        using var edgeBrush = new SolidBrush(edgeColor);
         g.FillRectangle(edgeBrush, 0, 0, 3, Height);
 
         // Border
-        using var borderPen = new Pen(_hovering ? Theme.BorderDefault : Theme.BorderSubtle);
+        using var borderPen = new Pen(Selected && _hovering ? Theme.BorderDefault : Theme.BorderSubtle);
         g.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
 
-        // Title
+        // Title — dimmed when deselected
+        var titleColor = Selected ? Theme.TextPrimary : Theme.TextMuted;
         using var titleFont = new Font("Segoe UI", 9f, FontStyle.Bold);
-        using var titleBrush = new SolidBrush(Theme.TextPrimary);
+        using var titleBrush = new SolidBrush(titleColor);
         g.DrawString(AddonTitle, titleFont, titleBrush, 12, 8);
 
         // Description
+        var descColor = Selected ? Theme.TextMuted : Theme.TextDim;
         using var descFont = new Font("Segoe UI", 7.5f);
-        using var descBrush = new SolidBrush(Theme.TextMuted);
+        using var descBrush = new SolidBrush(descColor);
         g.DrawString(Description, descFont, descBrush, 12, 26);
+
+        // Toggle indicator on the right
+        var indicatorX = Width - 28;
+        var indicatorY = Height / 2 - 7;
+        if (Selected)
+        {
+            using var checkBrush = new SolidBrush(EdgeColor);
+            g.FillRectangle(checkBrush, indicatorX, indicatorY, 14, 14);
+            // Draw checkmark
+            using var checkPen = new Pen(Theme.BgDeep, 2f);
+            g.DrawLine(checkPen, indicatorX + 3, indicatorY + 7, indicatorX + 6, indicatorY + 10);
+            g.DrawLine(checkPen, indicatorX + 6, indicatorY + 10, indicatorX + 11, indicatorY + 4);
+        }
+        else
+        {
+            using var boxPen = new Pen(Theme.BorderDefault);
+            g.DrawRectangle(boxPen, indicatorX, indicatorY, 14, 14);
+        }
     }
 
-    protected override void OnMouseEnter(EventArgs e) { _hovering = true; Invalidate(); }
-    protected override void OnMouseLeave(EventArgs e) { _hovering = false; Invalidate(); }
+    protected override void OnMouseEnter(EventArgs e) { _hovering = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { _hovering = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        Selected = !Selected;
+        Invalidate();
+        base.OnMouseUp(e);
+    }
 }
 
 // ── Install Form ───────────────────────────────────────────────────
@@ -678,13 +770,18 @@ class InstallForm : Form
     readonly GoldProgressBar _progressBar;
     readonly Label _statusLine;
     readonly Label _pathValue;
+    readonly List<AddonCard> _addonCards = new();
+    readonly Panel _cardsPanel;
+    readonly Panel _bottomPanel; // holds install btn, progress, status, check-updates
+    readonly Panel _pathRow;
 
     public InstallForm(TrayContext ctx)
     {
         _ctx = ctx;
         DoubleBuffered = true;
 
-        Text = "Trinketed";
+        Text = "Trinketed Desktop";
+        Icon = TrayContext.CreateTrayIcon();
         ClientSize = new Size(420, 460);
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -717,56 +814,52 @@ class InstallForm : Form
         };
         Controls.Add(header);
 
-        // Logo hexagon
+        // Logo — matching webapp nav-logo SVG
         var logo = new Panel { Size = new Size(36, 36), Location = new Point(20, 18), BackColor = Color.Transparent };
         logo.Paint += (_, e) =>
         {
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            var cx = 18f; var cy = 18f; var r = 16f;
-            var pts = new PointF[6];
-            for (int i = 0; i < 6; i++)
-            {
-                var angle = Math.PI / 6 + i * Math.PI / 3;
-                pts[i] = new PointF(cx + r * (float)Math.Cos(angle), cy + r * (float)Math.Sin(angle));
-            }
-            using var brush = new SolidBrush(Color.FromArgb(20, Theme.Gold));
-            g.FillPolygon(brush, pts);
-            using var pen = new Pen(Color.FromArgb(80, Theme.Gold));
-            g.DrawPolygon(pen, pts);
+            var s = 36f / 24f;
+            var outer = TrayContext.SvgHexPoints(TrayContext.OuterHex, s);
+            var inner = TrayContext.SvgHexPoints(TrayContext.InnerHex, s);
+
+            using var outerPen = new Pen(Theme.Gold, 1.5f * s);
+            g.DrawPolygon(outerPen, outer);
+            using var innerFill = new SolidBrush(Color.FromArgb(77, Theme.Gold));
+            g.FillPolygon(innerFill, inner);
+            using var innerPen = new Pen(Theme.Gold, 1f * s);
+            g.DrawPolygon(innerPen, inner);
         };
         header.Controls.Add(logo);
 
-        // Brand text: "TRINKETED" with gold T
-        var brandT = new Label
+        // Brand text — owner-drawn so "T" is gold, rest is text-primary
+        var brandPanel = new Panel
         {
-            Text = "T",
-            Font = new Font("Segoe UI", 14, FontStyle.Bold),
-            ForeColor = Theme.Gold,
-            AutoSize = true,
+            Size = new Size(180, 28),
             Location = new Point(62, 14),
             BackColor = Color.Transparent
         };
-        header.Controls.Add(brandT);
-
-        var brandRest = new Label
+        brandPanel.Paint += (_, e) =>
         {
-            Text = "RINKETED",
-            Font = new Font("Segoe UI", 14, FontStyle.Bold),
-            ForeColor = Theme.TextPrimary,
-            AutoSize = true,
-            Location = new Point(78, 14),
-            BackColor = Color.Transparent
+            var g = e.Graphics;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
+            using var font = new Font("Segoe UI", 14, FontStyle.Bold);
+            using var goldBrush = new SolidBrush(Theme.Gold);
+            using var textBrush = new SolidBrush(Theme.TextPrimary);
+            var tWidth = TextRenderer.MeasureText(g, "T", font, Size.Empty, TextFormatFlags.NoPadding).Width;
+            TextRenderer.DrawText(g, "T", font, new Point(0, 0), Theme.Gold, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, "RINKETED", font, new Point(tWidth, 0), Theme.TextPrimary, TextFormatFlags.NoPadding);
         };
-        header.Controls.Add(brandRest);
+        header.Controls.Add(brandPanel);
 
         var subtitle = new Label
         {
-            Text = "Arena Addon Suite",
+            Text = "Arena Suite",
             Font = new Font("Segoe UI", 8),
             ForeColor = Theme.TextMuted,
             AutoSize = true,
-            Location = new Point(64, 42),
+            Location = new Point(62, 42),
             BackColor = Color.Transparent
         };
         header.Controls.Add(subtitle);
@@ -819,10 +912,10 @@ class InstallForm : Form
 
         y += 16 + 56;
 
-        // ── Sub-addon cards ──
+        // ── Sub-addon cards (loaded dynamically) ──
         var cardLabel = new Label
         {
-            Text = "INCLUDED",
+            Text = "LOADING ADDONS...",
             Font = new Font("Segoe UI", 7, FontStyle.Bold),
             ForeColor = Theme.TextDim,
             AutoSize = true,
@@ -831,85 +924,98 @@ class InstallForm : Form
         Controls.Add(cardLabel);
         y += 32;
 
-        var cards = new (string title, string desc, Color edge)[]
+        _cardsPanel = new Panel
         {
-            ("Trinketed", "Core framework & shared library", Theme.Gold),
-            ("TrinketedCD", "Arena cooldown tracker", Theme.AccentBlue),
-            ("TrinketedHistory", "Match history & VOD timestamps", Theme.Positive),
+            Location = new Point(0, y),
+            Size = new Size(420, 0), // will grow dynamically
+            BackColor = Color.Transparent
         };
+        Controls.Add(_cardsPanel);
 
-        foreach (var (title, desc, edge) in cards)
+        // ── Bottom section (install btn, progress, status, check-updates) ──
+        _bottomPanel = new Panel
         {
-            var card = new AddonCard
-            {
-                AddonTitle = title,
-                Description = desc,
-                EdgeColor = edge,
-                Location = new Point(16, y),
-                Size = new Size(388, 48)
-            };
-            Controls.Add(card);
-            y += 52;
-        }
+            Location = new Point(0, y),
+            Size = new Size(420, 100),
+            BackColor = Color.Transparent
+        };
+        Controls.Add(_bottomPanel);
 
-        // ── Install button + progress ──
-        y += 4;
+        int by = 4;
         _installBtn = new GoldButton
         {
             Text = "INSTALL",
-            Location = new Point(16, y),
+            Location = new Point(16, by),
             Size = new Size(388, 38),
             Enabled = false
         };
         _installBtn.Click += InstallClick;
-        Controls.Add(_installBtn);
+        _bottomPanel.Controls.Add(_installBtn);
 
-        y += 42;
+        by += 42;
         _progressBar = new GoldProgressBar
         {
-            Location = new Point(16, y),
+            Location = new Point(16, by),
             Size = new Size(388, 4),
             Visible = false
         };
-        Controls.Add(_progressBar);
+        _bottomPanel.Controls.Add(_progressBar);
 
-        y += 10;
+        by += 10;
         _statusLine = new Label
         {
             Text = "",
             Font = new Font("Segoe UI", 7.5f),
             ForeColor = Theme.TextMuted,
             AutoSize = false,
-            Size = new Size(388, 16),
-            Location = new Point(18, y),
+            Size = new Size(260, 16),
+            Location = new Point(18, by),
             TextAlign = ContentAlignment.MiddleLeft
         };
-        Controls.Add(_statusLine);
+        _bottomPanel.Controls.Add(_statusLine);
+
+        var checkUpdatesBtn = new GhostButton
+        {
+            Text = "Check for Updates",
+            Size = new Size(120, 20),
+            Location = new Point(284, by - 2)
+        };
+        checkUpdatesBtn.Click += async (_, _) =>
+        {
+            checkUpdatesBtn.Enabled = false;
+            checkUpdatesBtn.Text = "Checking...";
+            SetStatus("Checking for updates...");
+            await _ctx.RefreshRelease();
+            await _ctx.CheckAppUpdate();
+            await RefreshUI();
+            checkUpdatesBtn.Text = "Check for Updates";
+            checkUpdatesBtn.Enabled = true;
+        };
+        _bottomPanel.Controls.Add(checkUpdatesBtn);
 
         // ── Footer: path ──
-        y += 24;
-        var pathRow = new Panel
+        _pathRow = new Panel
         {
-            Location = new Point(0, y),
+            Location = new Point(0, 0), // positioned in LayoutFromCards
             Size = new Size(420, 30),
             BackColor = Theme.BgBase
         };
-        pathRow.Paint += (_, e) =>
+        _pathRow.Paint += (_, e) =>
         {
             using var pen = new Pen(Theme.BorderSubtle);
-            e.Graphics.DrawLine(pen, 0, 0, pathRow.Width, 0);
+            e.Graphics.DrawLine(pen, 0, 0, _pathRow.Width, 0);
         };
-        Controls.Add(pathRow);
+        Controls.Add(_pathRow);
 
         var pathIcon = new Label
         {
-            Text = "📂",
+            Text = "\U0001F4C2",
             Font = new Font("Segoe UI", 8),
             AutoSize = true,
             Location = new Point(16, 6),
             BackColor = Color.Transparent
         };
-        pathRow.Controls.Add(pathIcon);
+        _pathRow.Controls.Add(pathIcon);
 
         _pathValue = new Label
         {
@@ -920,7 +1026,7 @@ class InstallForm : Form
             Location = new Point(36, 8),
             BackColor = Color.Transparent
         };
-        pathRow.Controls.Add(_pathValue);
+        _pathRow.Controls.Add(_pathValue);
 
         var browseBtn = new GhostButton
         {
@@ -929,9 +1035,57 @@ class InstallForm : Form
             Location = new Point(350, 4)
         };
         browseBtn.Click += BrowseClick;
-        pathRow.Controls.Add(browseBtn);
+        _pathRow.Controls.Add(browseBtn);
 
-        Shown += async (_, _) => await RefreshUI();
+        Shown += async (_, _) =>
+        {
+            await LoadAddonCards(cardLabel);
+            await RefreshUI();
+        };
+    }
+
+    async Task LoadAddonCards(Label cardLabel)
+    {
+        var addons = await _ctx.FetchAddonManifest();
+        cardLabel.Text = "INCLUDED";
+
+        _cardsPanel.SuspendLayout();
+        _addonCards.Clear();
+        _cardsPanel.Controls.Clear();
+
+        int cy = 0;
+        foreach (var addon in addons)
+        {
+            var card = new AddonCard
+            {
+                AddonTitle = addon.Name,
+                FolderName = addon.Name,
+                Description = addon.Description,
+                EdgeColor = addon.ParsedColor,
+                Location = new Point(16, cy),
+                Size = new Size(388, 48)
+            };
+            _addonCards.Add(card);
+            _cardsPanel.Controls.Add(card);
+            cy += 52;
+        }
+
+        _cardsPanel.Size = new Size(420, cy);
+        _cardsPanel.ResumeLayout();
+        LayoutFromCards();
+    }
+
+    void LayoutFromCards()
+    {
+        // Position bottom panel right after the cards panel
+        int y = _cardsPanel.Bottom;
+        _bottomPanel.Location = new Point(0, y);
+
+        // Position path row after bottom panel
+        _pathRow.Location = new Point(0, _bottomPanel.Bottom);
+
+        // Resize the form
+        ClientSize = new Size(420, _pathRow.Bottom);
     }
 
     void SetStatus(string msg) { if (InvokeRequired) Invoke(() => SetStatus(msg)); else _statusLine.Text = msg; }
@@ -979,8 +1133,8 @@ class InstallForm : Form
             {
                 _arrow.Visible = false;
                 _latestValue.Visible = false;
-                _installedValue.ForeColor = Theme.Positive;
-                _installBtn.Text = "✓  UP TO DATE";
+                _installedValue.ForeColor = Theme.Gold;
+                _installBtn.Text = "UP TO DATE";
                 _installBtn.Enabled = false;
                 _installBtn.IsUpToDate = true;
                 _installBtn.Invalidate();
@@ -1023,12 +1177,16 @@ class InstallForm : Form
 
     async void InstallClick(object? sender, EventArgs e)
     {
+        var selected = new HashSet<string>(
+            _addonCards.Where(c => c.Selected).Select(c => c.FolderName));
+        if (selected.Count == 0) { SetStatus("No addons selected."); return; }
+
         _installBtn.Enabled = false;
         _installBtn.Text = "INSTALLING...";
         _progressBar.Visible = true;
         _progressBar.Value = 0;
 
-        var result = await _ctx.InstallAddon(SetStatus, SetProgress);
+        var result = await _ctx.InstallAddon(selected, SetStatus, SetProgress);
         if (result != "success") SetStatus(result);
 
         _progressBar.Visible = false;
@@ -1039,18 +1197,28 @@ class InstallForm : Form
 // ── Dark Context Menu Renderer ─────────────────────────────────────
 class DarkMenuRenderer : ToolStripProfessionalRenderer
 {
+    public DarkMenuRenderer() : base(new DarkMenuColors()) { }
+
     protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
     {
+        var rect = new Rectangle(Point.Empty, e.Item.Size);
         var color = e.Item.Selected ? Theme.BgHover : Theme.BgRaised;
         using var brush = new SolidBrush(color);
-        e.Graphics.FillRectangle(brush, e.Item.ContentRectangle);
+        e.Graphics.FillRectangle(brush, rect);
+    }
+
+    protected override void OnRenderImageMargin(ToolStripRenderEventArgs e)
+    {
+        // Fill the image margin column with the same background
+        using var brush = new SolidBrush(Theme.BgRaised);
+        e.Graphics.FillRectangle(brush, e.AffectedBounds);
     }
 
     protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
     {
-        var rect = e.Item.ContentRectangle;
+        var y = e.Item.Height / 2;
         using var pen = new Pen(Theme.BorderSubtle);
-        e.Graphics.DrawLine(pen, rect.Left, rect.Height / 2, rect.Right, rect.Height / 2);
+        e.Graphics.DrawLine(pen, 0, y, e.Item.Width, y);
     }
 
     protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
@@ -1067,8 +1235,33 @@ class DarkMenuRenderer : ToolStripProfessionalRenderer
 
     protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e)
     {
-        using var brush = new SolidBrush(Theme.Gold);
+        // Dark background behind checkmark
+        using var bgBrush = new SolidBrush(Theme.BgRaised);
+        e.Graphics.FillRectangle(bgBrush, e.ImageRectangle);
         using var font = new Font("Segoe UI", 8, FontStyle.Bold);
+        using var brush = new SolidBrush(Theme.Gold);
         e.Graphics.DrawString("✓", font, brush, e.ImageRectangle.X + 2, e.ImageRectangle.Y + 2);
     }
+}
+
+class DarkMenuColors : ProfessionalColorTable
+{
+    public override Color MenuBorder => Theme.BorderSubtle;
+    public override Color MenuItemBorder => Color.Transparent;
+    public override Color MenuItemSelected => Theme.BgHover;
+    public override Color MenuStripGradientBegin => Theme.BgRaised;
+    public override Color MenuStripGradientEnd => Theme.BgRaised;
+    public override Color MenuItemSelectedGradientBegin => Theme.BgHover;
+    public override Color MenuItemSelectedGradientEnd => Theme.BgHover;
+    public override Color MenuItemPressedGradientBegin => Theme.BgElevated;
+    public override Color MenuItemPressedGradientEnd => Theme.BgElevated;
+    public override Color ImageMarginGradientBegin => Theme.BgRaised;
+    public override Color ImageMarginGradientMiddle => Theme.BgRaised;
+    public override Color ImageMarginGradientEnd => Theme.BgRaised;
+    public override Color SeparatorDark => Theme.BorderSubtle;
+    public override Color SeparatorLight => Theme.BorderSubtle;
+    public override Color CheckBackground => Theme.BgRaised;
+    public override Color CheckPressedBackground => Theme.BgRaised;
+    public override Color CheckSelectedBackground => Theme.BgRaised;
+    public override Color ToolStripDropDownBackground => Theme.BgRaised;
 }
