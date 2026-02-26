@@ -1,0 +1,28 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish
+        run: dotnet publish -c Release -r win-x64 --self-contained -o ./publish
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ./publish/TrinketedDesktop.exe
+          generate_release_notes: true
