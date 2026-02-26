@@ -96,7 +96,7 @@ class AddonInfo
 // ── Tray Application Context ──────────────────────────────────────
 class TrayContext : ApplicationContext
 {
-    const string AppVersion = "1.0.0";
+    const string AppVersion = "1.2.0";
     const string AppRepo = "Trinketed/desktop";
     const string Repo = "Trinketed/addon";
     const string AddonName = "Trinketed";
@@ -719,81 +719,119 @@ class AddonCard : Control
     public bool Selected { get; set; } = true;
     public bool IsRequired { get; set; }
     public string? InstalledVersion { get; set; }
+    public string? LatestVersion { get; set; }
     public bool IsInstalled => InstalledVersion != null;
+    public bool HasUpdate => IsInstalled && LatestVersion != null && NormalizeVersion(InstalledVersion!) != NormalizeVersion(LatestVersion);
+    public bool NeedsAction => !IsInstalled || HasUpdate;
     public event EventHandler? UninstallRequested;
+    public event EventHandler? InstallRequested;
+    public event EventHandler? SelectionChanged;
     bool _hovering;
     bool _hoveringUninstall;
+    bool _hoveringAction;
+
+    static string NormalizeVersion(string v) => v.TrimStart('v');
 
     public AddonCard()
     {
         DoubleBuffered = true;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.Selectable, true);
         Cursor = Cursors.Hand;
-        Height = 52;
+        Height = 58;
     }
 
-    Rectangle UninstallRect => new(Width - 56, 30, 48, 20);
+    Rectangle UninstallRect => new(Width - 56, 36, 48, 20);
+    Rectangle ActionRect => new(Width - 56, 36, 48, 20);
 
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        // Background — dimmed when deselected
-        var bg = !Selected ? Theme.BgBase
-               : _hovering ? Theme.BgHover : Theme.BgElevated;
+        bool upToDate = IsInstalled && !HasUpdate;
+
+        // Background — 3 visual tiers: up-to-date (settled), active (bright), deselected (dim)
+        Color bg;
+        if (!Selected)
+            bg = Theme.BgBase;
+        else if (upToDate)
+            bg = _hovering ? Theme.BgRaised : Theme.BgBase;
+        else
+            bg = _hovering ? Theme.BgHover : Theme.BgElevated;
         using var fill = new SolidBrush(bg);
         g.FillRectangle(fill, 0, 0, Width, Height);
 
-        // Left edge bar — dimmed when deselected
-        var edgeColor = Selected ? EdgeColor : Color.FromArgb(60, EdgeColor);
-        using var edgeBrush = new SolidBrush(edgeColor);
+        // Left edge bar
+        var edgeAlpha = !Selected ? 60 : upToDate ? 140 : 255;
+        using var edgeBrush = new SolidBrush(Color.FromArgb(edgeAlpha, EdgeColor));
         g.FillRectangle(edgeBrush, 0, 0, 3, Height);
 
         // Border
         using var borderPen = new Pen(Selected && _hovering ? Theme.BorderDefault : Theme.BorderSubtle);
         g.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
 
-        // Title — dimmed when deselected
-        var titleColor = Selected ? Theme.TextPrimary : Theme.TextMuted;
+        // Title
+        var titleColor = !Selected ? Theme.TextMuted : upToDate ? Theme.TextPrimary : Theme.TextPrimary;
         using var titleFont = new Font("Segoe UI", 9f, FontStyle.Bold);
         using var titleBrush = new SolidBrush(titleColor);
         g.DrawString(AddonTitle, titleFont, titleBrush, 12, 6);
 
         // Description
-        var descColor = Selected ? Theme.TextMuted : Theme.TextDim;
+        var descColor = !Selected ? Theme.TextDim : upToDate ? Theme.TextMuted : Theme.TextMuted;
         using var descFont = new Font("Segoe UI", 7.5f);
         using var descBrush = new SolidBrush(descColor);
         g.DrawString(Description, descFont, descBrush, 12, 24);
 
-        // Status badge + uninstall button (right side, below checkbox area)
-        using var statusFont = new Font("Segoe UI", 7f);
-        if (IsInstalled)
-        {
-            var statusText = InstalledVersion == "installed" ? "INSTALLED" : $"v{InstalledVersion}";
-            var statusColor = Color.FromArgb(120, EdgeColor);
-            using var statusBrush = new SolidBrush(statusColor);
-            g.DrawString(statusText, statusFont, statusBrush, 12, 38);
+        // Status line + action button
+        using var statusFont = new Font("Segoe UI", 7.5f);
+        using var btnFont = new Font("Segoe UI", 6.5f);
+        var btnSf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
 
-            // Uninstall button — always visible
-            var rect = UninstallRect;
-            var unBg = _hoveringUninstall ? Color.FromArgb(30, Theme.Negative) : Theme.BgBase;
-            var unFg = _hoveringUninstall ? Theme.Negative : Theme.TextSecondary;
-            var unBorder = _hoveringUninstall ? Color.FromArgb(80, Theme.Negative) : Theme.BorderDefault;
-            using var unBgBrush = new SolidBrush(unBg);
-            using var unPath = GhostButton.RoundedRect(rect, 3);
-            g.FillPath(unBgBrush, unPath);
-            using var unBorderPen = new Pen(unBorder);
-            g.DrawPath(unBorderPen, unPath);
-            using var unFont = new Font("Segoe UI", 6.5f);
-            using var unBrush = new SolidBrush(unFg);
-            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
-            g.DrawString("Remove", unFont, unBrush, rect, sf);
+        if (IsInstalled && HasUpdate)
+        {
+            // Show "v0.1.1 → v0.1.2" + Update button
+            var fromText = InstalledVersion == "installed" ? "installed" : $"v{NormalizeVersion(InstalledVersion!)}";
+            var toText = $"v{NormalizeVersion(LatestVersion!)}";
+            using var fromBrush = new SolidBrush(Theme.TextMuted);
+            g.DrawString(fromText, statusFont, fromBrush, 12, 40);
+            var fromWidth = g.MeasureString(fromText, statusFont).Width;
+            using var arrowBrush = new SolidBrush(Theme.TextDim);
+            g.DrawString("\u2192", statusFont, arrowBrush, 12 + fromWidth, 40);
+            var arrowWidth = g.MeasureString("\u2192", statusFont).Width;
+            using var toBrush = new SolidBrush(Theme.Gold);
+            g.DrawString(toText, statusFont, toBrush, 12 + fromWidth + arrowWidth + 2, 40);
+
+            DrawCardButton(g, ActionRect, "Update",
+                _hoveringAction ? Theme.Gold : Theme.TextSecondary,
+                _hoveringAction ? Color.FromArgb(20, Theme.Gold) : Theme.BgRaised,
+                _hoveringAction ? Color.FromArgb(80, Theme.Gold) : Theme.BorderDefault,
+                btnFont, btnSf);
+        }
+        else if (IsInstalled)
+        {
+            // Up to date — settled look with version and checkmark
+            var verText = InstalledVersion == "installed" ? "Up to date" : $"v{NormalizeVersion(InstalledVersion!)} \u2014 Up to date";
+            using var statusBrush = new SolidBrush(Theme.TextSecondary);
+            g.DrawString(verText, statusFont, statusBrush, 12, 40);
+
+            // Always show Remove button
+            DrawCardButton(g, UninstallRect, "Remove",
+                _hoveringUninstall ? Theme.Negative : Theme.TextSecondary,
+                _hoveringUninstall ? Color.FromArgb(30, Theme.Negative) : Theme.BgRaised,
+                _hoveringUninstall ? Color.FromArgb(80, Theme.Negative) : Theme.BorderDefault,
+                btnFont, btnSf);
         }
         else
         {
-            using var notInstalledBrush = new SolidBrush(Theme.TextDim);
-            g.DrawString("NOT INSTALLED", statusFont, notInstalledBrush, 12, 38);
+            // Not installed
+            using var notInstalledBrush = new SolidBrush(Theme.TextSecondary);
+            g.DrawString("Not installed", statusFont, notInstalledBrush, 12, 40);
+
+            DrawCardButton(g, ActionRect, "Install",
+                _hoveringAction ? Theme.Gold : Theme.TextSecondary,
+                _hoveringAction ? Color.FromArgb(20, Theme.Gold) : Theme.BgRaised,
+                _hoveringAction ? Color.FromArgb(80, Theme.Gold) : Theme.BorderDefault,
+                btnFont, btnSf);
         }
 
         // Required badge next to title
@@ -801,7 +839,7 @@ class AddonCard : Control
         {
             var titleSize = g.MeasureString(AddonTitle, titleFont);
             using var reqFont = new Font("Segoe UI", 6.5f);
-            using var reqBrush = new SolidBrush(Theme.TextDim);
+            using var reqBrush = new SolidBrush(upToDate ? Theme.GoldDim : Theme.GoldDim);
             g.DrawString("REQUIRED", reqFont, reqBrush, 12 + titleSize.Width + 4, 8);
         }
 
@@ -810,7 +848,8 @@ class AddonCard : Control
         var indicatorY = 10;
         if (IsRequired)
         {
-            using var checkBrush = new SolidBrush(Color.FromArgb(100, EdgeColor));
+            var checkAlpha = upToDate ? 60 : 100;
+            using var checkBrush = new SolidBrush(Color.FromArgb(checkAlpha, EdgeColor));
             g.FillRectangle(checkBrush, indicatorX, indicatorY, 14, 14);
             using var checkPen = new Pen(Theme.BgDeep, 2f);
             g.DrawLine(checkPen, indicatorX + 3, indicatorY + 7, indicatorX + 6, indicatorY + 10);
@@ -818,7 +857,8 @@ class AddonCard : Control
         }
         else if (Selected)
         {
-            using var checkBrush = new SolidBrush(EdgeColor);
+            var boxColor = upToDate ? Color.FromArgb(120, EdgeColor) : EdgeColor;
+            using var checkBrush = new SolidBrush(boxColor);
             g.FillRectangle(checkBrush, indicatorX, indicatorY, 14, 14);
             using var checkPen = new Pen(Theme.BgDeep, 2f);
             g.DrawLine(checkPen, indicatorX + 3, indicatorY + 7, indicatorX + 6, indicatorY + 10);
@@ -831,26 +871,49 @@ class AddonCard : Control
         }
     }
 
+    void DrawCardButton(Graphics g, Rectangle rect, string text, Color fg, Color bg, Color border, Font font, StringFormat sf)
+    {
+        using var bgBrush = new SolidBrush(bg);
+        using var path = GhostButton.RoundedRect(rect, 3);
+        g.FillPath(bgBrush, path);
+        using var borderPen = new Pen(border);
+        g.DrawPath(borderPen, path);
+        using var textBrush = new SolidBrush(fg);
+        g.DrawString(text, font, textBrush, rect, sf);
+    }
+
     protected override void OnMouseMove(MouseEventArgs e)
     {
-        var overUninstall = IsInstalled && UninstallRect.Contains(e.Location);
-        if (overUninstall != _hoveringUninstall) { _hoveringUninstall = overUninstall; Invalidate(); }
+        var overUninstall = IsInstalled && !HasUpdate && UninstallRect.Contains(e.Location);
+        var overAction = NeedsAction && ActionRect.Contains(e.Location);
+        var changed = false;
+        if (overUninstall != _hoveringUninstall) { _hoveringUninstall = overUninstall; changed = true; }
+        if (overAction != _hoveringAction) { _hoveringAction = overAction; changed = true; }
+        if (changed) Invalidate();
         base.OnMouseMove(e);
     }
 
     protected override void OnMouseEnter(EventArgs e) { _hovering = true; Invalidate(); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { _hovering = false; _hoveringUninstall = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnMouseLeave(EventArgs e) { _hovering = false; _hoveringUninstall = false; _hoveringAction = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnMouseUp(MouseEventArgs e)
     {
-        // Check if clicking the uninstall button
-        if (IsInstalled && UninstallRect.Contains(e.Location))
+        // Check if clicking the Remove button (installed, no update)
+        if (IsInstalled && !HasUpdate && UninstallRect.Contains(e.Location))
         {
             UninstallRequested?.Invoke(this, EventArgs.Empty);
             return;
         }
+        // Check if clicking the Install/Update button
+        if (NeedsAction && ActionRect.Contains(e.Location))
+        {
+            InstallRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
         if (IsRequired) return;
+        if (IsInstalled && !HasUpdate) return; // up to date — no toggle needed
         Selected = !Selected;
         Invalidate();
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
         base.OnMouseUp(e);
     }
 }
@@ -859,16 +922,14 @@ class AddonCard : Control
 class InstallForm : Form
 {
     readonly TrayContext _ctx;
-    readonly Label _installedValue;
-    readonly Label _latestValue;
-    readonly Label _arrow;
     readonly GoldButton _installBtn;
+    readonly GhostButton _updateBtn;
     readonly GoldProgressBar _progressBar;
     readonly Label _statusLine;
     readonly Label _pathValue;
     readonly List<AddonCard> _addonCards = new();
     readonly Panel _cardsPanel;
-    readonly Panel _bottomPanel; // holds install btn, progress, status, check-updates
+    readonly Panel _bottomPanel;
     readonly Panel _pathRow;
 
     public InstallForm(TrayContext ctx)
@@ -962,52 +1023,6 @@ class InstallForm : Form
 
         y = 72;
 
-        // ── Version hero ──
-        var versionPanel = new SurfacePanel
-        {
-            Location = new Point(16, y + 16),
-            Size = new Size(388, 56),
-            BackColor = Theme.BgRaised,
-            BorderColor = Theme.BorderSubtle
-        };
-        Controls.Add(versionPanel);
-
-        _installedValue = new Label
-        {
-            Text = "...",
-            Font = new Font("Consolas", 13, FontStyle.Bold),
-            ForeColor = Theme.TextMuted,
-            AutoSize = true,
-            Location = new Point(16, 16),
-            BackColor = Color.Transparent
-        };
-        versionPanel.Controls.Add(_installedValue);
-
-        _arrow = new Label
-        {
-            Text = "→",
-            Font = new Font("Segoe UI", 12),
-            ForeColor = Theme.TextDim,
-            AutoSize = true,
-            Location = new Point(120, 16),
-            BackColor = Color.Transparent,
-            Visible = false
-        };
-        versionPanel.Controls.Add(_arrow);
-
-        _latestValue = new Label
-        {
-            Text = "checking...",
-            Font = new Font("Consolas", 13, FontStyle.Bold),
-            ForeColor = Theme.Gold,
-            AutoSize = true,
-            Location = new Point(148, 16),
-            BackColor = Color.Transparent
-        };
-        versionPanel.Controls.Add(_latestValue);
-
-        y += 16 + 56;
-
         // ── Sub-addon cards (loaded dynamically) ──
         var cardLabel = new Label
         {
@@ -1018,7 +1033,18 @@ class InstallForm : Form
             Location = new Point(18, y + 14)
         };
         Controls.Add(cardLabel);
-        y += 32;
+
+        var cardHint = new Label
+        {
+            Text = "Select which addons to install. The core addon is always required.",
+            Font = new Font("Segoe UI", 7.5f),
+            ForeColor = Theme.TextMuted,
+            AutoSize = true,
+            Location = new Point(18, y + 30),
+            Visible = false
+        };
+        Controls.Add(cardHint);
+        y += 48;
 
         _cardsPanel = new Panel
         {
@@ -1038,6 +1064,18 @@ class InstallForm : Form
         Controls.Add(_bottomPanel);
 
         int by = 8;
+        _updateBtn = new GhostButton
+        {
+            Text = "UPDATE ALL",
+            Location = new Point(16, by),
+            Size = new Size(188, 38),
+            Visible = false,
+            Font = new Font("Segoe UI", 9, FontStyle.Bold),
+            BackColor = Theme.BgDeep
+        };
+        _updateBtn.Click += UpdateClick;
+        _bottomPanel.Controls.Add(_updateBtn);
+
         _installBtn = new GoldButton
         {
             Text = "INSTALL",
@@ -1138,19 +1176,22 @@ class InstallForm : Form
 
         Shown += async (_, _) =>
         {
-            await LoadAddonCards(cardLabel);
+            await LoadAddonCards(cardLabel, cardHint);
             await RefreshUI();
         };
     }
 
-    async Task LoadAddonCards(Label cardLabel)
+    async Task LoadAddonCards(Label cardLabel, Label cardHint)
     {
         var addons = await _ctx.FetchAddonManifest();
         cardLabel.Text = "ADDONS";
+        cardHint.Visible = true;
 
         _cardsPanel.SuspendLayout();
         _addonCards.Clear();
         _cardsPanel.Controls.Clear();
+
+        var latestVer = _ctx.LatestRelease?.Version;
 
         int cy = 0;
         foreach (var addon in addons)
@@ -1164,14 +1205,17 @@ class InstallForm : Form
                 EdgeColor = addon.ParsedColor,
                 IsRequired = addon.Required,
                 InstalledVersion = installedVer,
+                LatestVersion = latestVer,
                 Selected = addon.Required || installedVer != null,
                 Location = new Point(16, cy),
-                Size = new Size(388, 52)
+                Size = new Size(388, 58)
             };
             card.UninstallRequested += OnUninstallRequested;
+            card.InstallRequested += OnInstallRequested;
+            card.SelectionChanged += (_, _) => RecalcInstallButton();
             _addonCards.Add(card);
             _cardsPanel.Controls.Add(card);
-            cy += 56;
+            cy += 62;
         }
 
         _cardsPanel.Size = new Size(420, cy);
@@ -1181,9 +1225,11 @@ class InstallForm : Form
 
     void RefreshCardStatuses()
     {
+        var latestVer = _ctx.LatestRelease?.Version;
         foreach (var card in _addonCards)
         {
             card.InstalledVersion = _ctx.GetAddonVersion(card.FolderName);
+            card.LatestVersion = latestVer;
             card.Invalidate();
         }
     }
@@ -1192,32 +1238,53 @@ class InstallForm : Form
     {
         if (sender is not AddonCard card) return;
 
-        // If this is the core addon, check if any sub-addons are still installed
+        // If this is the core addon, offer to remove everything
         if (card.IsRequired)
         {
             var installedSubs = _addonCards
                 .Where(c => !c.IsRequired && c.IsInstalled)
                 .Select(c => c.AddonTitle)
                 .ToList();
-            if (installedSubs.Count > 0)
+
+            var message = installedSubs.Count > 0
+                ? $"Removing {card.AddonTitle} will also remove all installed addons:\n\n" +
+                  string.Join("\n", installedSubs.Select(s => $"  \u2022 {s}")) +
+                  "\n\nRemove everything?"
+                : $"Remove {card.AddonTitle} from your AddOns folder?\n\nThis will delete the {card.FolderName} directory.";
+
+            var result = MessageBox.Show(
+                message,
+                "Remove All Trinketed Addons",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (result != DialogResult.Yes) return;
+
+            // Remove sub-addons first, then core
+            var failed = new List<string>();
+            foreach (var sub in _addonCards.Where(c => !c.IsRequired && c.IsInstalled))
             {
-                MessageBox.Show(
-                    $"Cannot remove {card.AddonTitle} while sub-addons are installed:\n\n" +
-                    string.Join("\n", installedSubs.Select(s => $"  - {s}")) +
-                    "\n\nRemove those first.",
-                    "Trinketed Desktop",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
+                if (!_ctx.UninstallAddon(sub.FolderName))
+                    failed.Add(sub.AddonTitle);
             }
+            if (!_ctx.UninstallAddon(card.FolderName))
+                failed.Add(card.AddonTitle);
+
+            if (failed.Count > 0)
+                SetStatus($"Failed to remove: {string.Join(", ", failed)}");
+            else
+                SetStatus(installedSubs.Count > 0 ? "Removed all Trinketed addons." : $"Removed {card.AddonTitle}.");
+
+            RefreshCardStatuses();
+            await RefreshUI();
+            return;
         }
 
-        var result = MessageBox.Show(
+        var confirmResult = MessageBox.Show(
             $"Remove {card.AddonTitle} from your AddOns folder?\n\nThis will delete the {card.FolderName} directory.",
             "Confirm Remove",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question);
-        if (result != DialogResult.Yes) return;
+        if (confirmResult != DialogResult.Yes) return;
 
         if (_ctx.UninstallAddon(card.FolderName))
         {
@@ -1228,6 +1295,103 @@ class InstallForm : Form
         else
         {
             SetStatus($"Failed to remove {card.AddonTitle}.");
+        }
+    }
+
+    async void OnInstallRequested(object? sender, EventArgs e)
+    {
+        if (sender is not AddonCard card) return;
+
+        // Build set: this addon + core if required
+        var selected = new HashSet<string> { card.FolderName };
+        var coreCard = _addonCards.FirstOrDefault(c => c.IsRequired);
+        if (coreCard != null && !selected.Contains(coreCard.FolderName))
+        {
+            selected.Add(coreCard.FolderName);
+            coreCard.Selected = true;
+            coreCard.Invalidate();
+        }
+
+        card.Selected = true;
+        card.Invalidate();
+
+        _installBtn.Enabled = false;
+        _installBtn.Text = "INSTALLING...";
+        _updateBtn.Enabled = false;
+        _progressBar.Visible = true;
+        _progressBar.Value = 0;
+
+        var result = await _ctx.InstallAddon(selected, SetStatus, SetProgress);
+        if (result != "success") SetStatus(result);
+
+        _progressBar.Visible = false;
+        RefreshCardStatuses();
+        RecalcInstallButton();
+    }
+
+    void RecalcInstallButton()
+    {
+        var anyHasUpdate = _addonCards.Any(c => c.HasUpdate);
+        var anyNotInstalled = _addonCards.Any(c => c.Selected && !c.IsInstalled);
+        var updateCount = _addonCards.Count(c => c.HasUpdate);
+        var notInstalledCount = _addonCards.Count(c => c.Selected && !c.IsInstalled);
+        var hasPath = _ctx.AddOnsPath != null;
+
+        if (anyNotInstalled && anyHasUpdate)
+        {
+            // Both actions needed — show two buttons side by side
+            _updateBtn.Visible = true;
+            _updateBtn.Location = new Point(16, 8);
+            _updateBtn.Size = new Size(188, 38);
+            _updateBtn.Enabled = hasPath;
+
+            _installBtn.Location = new Point(212, 8);
+            _installBtn.Size = new Size(192, 38);
+            _installBtn.Text = "INSTALL SELECTED";
+            _installBtn.Enabled = hasPath;
+            _installBtn.IsUpToDate = false;
+            _installBtn.Invalidate();
+
+            SetStatus($"{notInstalledCount} to install, {updateCount} to update.");
+        }
+        else if (anyNotInstalled)
+        {
+            // Only installs needed
+            _updateBtn.Visible = false;
+            _installBtn.Location = new Point(16, 8);
+            _installBtn.Size = new Size(388, 38);
+            _installBtn.Text = "INSTALL SELECTED";
+            _installBtn.Enabled = hasPath;
+            _installBtn.IsUpToDate = false;
+            _installBtn.Invalidate();
+
+            SetStatus($"{notInstalledCount} addon(s) ready to install.");
+        }
+        else if (anyHasUpdate)
+        {
+            // Only updates needed — gold button says UPDATE ALL
+            _updateBtn.Visible = false;
+            _installBtn.Location = new Point(16, 8);
+            _installBtn.Size = new Size(388, 38);
+            _installBtn.Text = "UPDATE ALL";
+            _installBtn.Enabled = hasPath;
+            _installBtn.IsUpToDate = false;
+            _installBtn.Invalidate();
+
+            SetStatus($"{updateCount} addon(s) have updates available.");
+        }
+        else
+        {
+            // All up to date
+            _updateBtn.Visible = false;
+            _installBtn.Location = new Point(16, 8);
+            _installBtn.Size = new Size(388, 38);
+            _installBtn.Text = "ALL UP TO DATE";
+            _installBtn.Enabled = false;
+            _installBtn.IsUpToDate = true;
+            _installBtn.Invalidate();
+
+            SetStatus("All selected addons are up to date.");
         }
     }
 
@@ -1265,76 +1429,12 @@ class InstallForm : Form
         SetStatus("Checking for updates...");
         await _ctx.RefreshRelease();
 
-        // Refresh per-addon installed status
         RefreshCardStatuses();
 
-        // Installed version (core addon)
-        var ver = _ctx.InstalledVersion;
-        if (ver != null)
-        {
-            _installedValue.Text = ver;
-            _installedValue.ForeColor = Theme.TextSecondary;
-        }
+        if (_ctx.LatestRelease != null)
+            RecalcInstallButton();
         else
-        {
-            _installedValue.Text = "not installed";
-            _installedValue.ForeColor = Theme.TextMuted;
-        }
-
-        // Latest
-        var rel = _ctx.LatestRelease;
-        if (rel != null)
-        {
-            _latestValue.Text = rel.Version;
-            _latestValue.ForeColor = Theme.Gold;
-
-            // Check if all selected addons are installed
-            var allSelectedInstalled = _addonCards
-                .Where(c => c.Selected)
-                .All(c => c.IsInstalled);
-
-            if (ver != null && ver == rel.Version && allSelectedInstalled)
-            {
-                _arrow.Visible = false;
-                _latestValue.Visible = false;
-                _installedValue.ForeColor = Theme.Gold;
-                _installBtn.Text = "UP TO DATE";
-                _installBtn.Enabled = false;
-                _installBtn.IsUpToDate = true;
-                _installBtn.Invalidate();
-                SetStatus("All selected addons are up to date.");
-            }
-            else
-            {
-                _arrow.Visible = true;
-                _latestValue.Visible = true;
-                _installBtn.IsUpToDate = false;
-                // Position arrow and latest value after installed text
-                var installedWidth = TextRenderer.MeasureText(_installedValue.Text, _installedValue.Font).Width;
-                _arrow.Location = new Point(16 + installedWidth + 8, 16);
-                var arrowWidth = TextRenderer.MeasureText("→", _arrow.Font).Width;
-                _latestValue.Location = new Point(16 + installedWidth + 8 + arrowWidth + 4, 16);
-
-                // Determine button text based on state
-                var anyNotInstalled = _addonCards.Any(c => c.Selected && !c.IsInstalled);
-                _installBtn.Text = ver == null ? "INSTALL" : (anyNotInstalled ? "INSTALL / UPDATE" : "UPDATE");
-                _installBtn.Enabled = _ctx.AddOnsPath != null;
-
-                var notInstalledCount = _addonCards.Count(c => c.Selected && !c.IsInstalled);
-                if (ver == null)
-                    SetStatus("Ready to install.");
-                else if (notInstalledCount > 0)
-                    SetStatus($"Update available. {notInstalledCount} addon(s) not yet installed.");
-                else
-                    SetStatus($"Update available: {ver} → {rel.Version}");
-            }
-        }
-        else
-        {
-            _latestValue.Text = "offline";
-            _latestValue.ForeColor = Theme.Negative;
             SetStatus("Could not reach GitHub.");
-        }
     }
 
     void BrowseClick(object? sender, EventArgs e)
@@ -1350,13 +1450,21 @@ class InstallForm : Form
 
     async void InstallClick(object? sender, EventArgs e)
     {
+        // If the button says "UPDATE ALL", delegate to update logic
+        if (_installBtn.Text == "UPDATE ALL")
+        {
+            UpdateClick(sender, e);
+            return;
+        }
+
+        // Install selected uninstalled addons
         var selected = new HashSet<string>(
-            _addonCards.Where(c => c.Selected).Select(c => c.FolderName));
+            _addonCards.Where(c => c.Selected && !c.IsInstalled).Select(c => c.FolderName));
         if (selected.Count == 0) { SetStatus("No addons selected."); return; }
 
-        // Enforce core addon requirement — if any sub-addon is selected, core must be included
+        // Enforce core addon requirement
         var coreCard = _addonCards.FirstOrDefault(c => c.IsRequired);
-        if (coreCard != null && selected.Count > 0 && !selected.Contains(coreCard.FolderName))
+        if (coreCard != null && !selected.Contains(coreCard.FolderName))
         {
             selected.Add(coreCard.FolderName);
             coreCard.Selected = true;
@@ -1365,12 +1473,36 @@ class InstallForm : Form
 
         _installBtn.Enabled = false;
         _installBtn.Text = "INSTALLING...";
+        _updateBtn.Enabled = false;
         _progressBar.Visible = true;
         _progressBar.Value = 0;
 
         var result = await _ctx.InstallAddon(selected, SetStatus, SetProgress);
         if (result != "success") SetStatus(result);
 
+        _progressBar.Visible = false;
+        await RefreshUI();
+    }
+
+    async void UpdateClick(object? sender, EventArgs e)
+    {
+        // Update all installed addons that have updates
+        var toUpdate = new HashSet<string>(
+            _addonCards.Where(c => c.HasUpdate).Select(c => c.FolderName));
+        if (toUpdate.Count == 0) { SetStatus("Nothing to update."); return; }
+
+        _installBtn.Enabled = false;
+        _updateBtn.Enabled = false;
+        _updateBtn.Text = "UPDATING...";
+        if (_installBtn.Text != "INSTALL SELECTED")
+            _installBtn.Text = "UPDATING...";
+        _progressBar.Visible = true;
+        _progressBar.Value = 0;
+
+        var result = await _ctx.InstallAddon(toUpdate, SetStatus, SetProgress);
+        if (result != "success") SetStatus(result);
+
+        _updateBtn.Text = "UPDATE ALL";
         _progressBar.Visible = false;
         await RefreshUI();
     }
