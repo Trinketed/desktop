@@ -96,7 +96,7 @@ class AddonInfo
 // ── Tray Application Context ──────────────────────────────────────
 class TrayContext : ApplicationContext
 {
-    const string AppVersion = "1.2.0";
+    const string AppVersion = "1.2.1";
     const string AppRepo = "Trinketed/desktop";
     const string Repo = "Trinketed/addon";
     const string AddonName = "Trinketed";
